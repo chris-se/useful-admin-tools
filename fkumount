@@ -1,0 +1,200 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+# License: GPLv3 or higher
+
+import datetime, getopt, os, signal, subprocess, sys, threading, time
+
+# python 3: determine locale encoding
+#           (needed for some string handling later on)
+if sys.version_info[0] >= 3:
+	import locale
+	encoding_to_use = locale.getpreferredencoding()
+
+#****************************************************************************
+# Command line parsing
+#     We accept the same -R option as start-stop-daemon for killing
+#     processes.
+#****************************************************************************
+
+def usage():
+	sys.stdout.write("Usage: %s [-R schedule] path [path2 [path3 ...]]\n" % sys.argv[0])
+	sys.stdout.write("Forcibly Umount one or more paths by Killing processes still accessing them.\n")
+	sys.stdout.write("       (See man start-stop-daemon for details on -R option.\n")
+	sys.stdout.write("        Defaults to: TERM/10/TERM/10/TERM/10/KILL/5/KILL/5.)\n")
+
+def is_integer(s):
+	try:
+		int(s)
+		return True
+	except ValueError:
+		return False
+
+try:
+	opts, args = getopt.getopt(sys.argv[1:], "hR:", ["help", "retry="])
+except getopt.GetoptError as err:
+	sys.stderr.write("%s: %s\n" % (sys.argv[0], str(err)))
+	usage()
+	sys.exit(2)
+
+retryspec="TERM/10/TERM/10/TERM/10/KILL/5/KILL/5"
+
+for opt, arg in opts:
+	if opt in ("-R", "--retry"):
+		retryspec = arg
+	elif opt in ("-h", "--help"):
+		usage()
+		sys.exit()
+	else:
+		assert False, "unhandled option"
+
+if is_integer(retryspec):
+	retryspec = "TERM/%d/TERM/%d/TERM/%d/KILL/%s/KILL/%s" % (int((int(retryspec) + 1)/3), int((int(retryspec) + 1)/3), int(int(retryspec)/3), int((int(retryspec) + 1)/2), int(int(retryspec)/2))
+
+retryspec = retryspec.split("/")
+if len(retryspec) % 2 != 0:
+	sys.stderr.write("%s: Invalid retry option %s specified.\n" % (sys.argv[0], "/".join(retryspec)))
+	sys.exit(2)
+
+retries = []
+for i in range(int(len(retryspec) / 2)):
+	try:
+		sig = retryspec[2 * i]
+		if retryspec[2 * i + 1] == "forever":
+			timeout = -1
+		else:
+			timeout = int(retryspec[2 * i + 1])
+			if timeout <= 0:
+				raise ValueError
+	except ValueError:
+		sys.stderr.write("%s: Invalid timeout %s specified.\n" % (sys.argv[0], retryspec[2 * i + 1]))
+		sys.exit(2)
+	if sig[0] == "-" and is_integer(sig[1:]):
+		sig = int(sig[1:])
+	else:
+		if sig[0] == "-":
+			sig = sig[1:]
+		try:
+			sig = signal.__dict__["SIG%s" % sig]
+		except KeyError:
+			sys.stderr.write("%s: Invalid signal %s specified.\n" % (sys.argv[0], retryspec[2 * i]))
+			sys.exit(2)
+	retries.append((sig, timeout))
+
+# lookup paths relative to current dir, so relative paths are allowed
+mpoints = []
+for arg in args:
+	mpoint = os.path.realpath(arg)
+	if not os.path.exists(arg):
+		sys.stderr.write("%s: Skipping non-existing mount point %s.\n" % (sys.argv[0], arg));
+		continue
+	if mpoint == "/":
+		sys.stderr.write("%s: Skipping mount point %s that is equivalent to /.\n" % (sys.argv[0], arg))
+		continue
+	mpoints.append(mpoint)
+
+if not len(mpoints):
+	sys.stderr.write("%s: No mountpoints specified.\n" % (sys.argv[0]))
+	sys.exit(2)
+
+#****************************************************************************
+# Actual umounting logic
+#    retries now contains a list of tuples with signal and timeout of
+#    how to kill processes if umount doesn't immediately work
+#****************************************************************************
+
+# don't be part of the problem, get out of the way
+os.chdir("/")
+
+def run(cmd):
+	p = subprocess.Popen(cmd, stdin=open("/dev/null","r"), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+	out, err = p.communicate()
+	# python 3: convert output to str type (which is unicode in python3)
+	if sys.version_info[0] >= 3:
+		out = out.decode(encoding_to_use, errors='replace')
+		err = err.decode(encoding_to_use, errors='replace')
+	return (p.returncode, out, err)
+
+# See if mount point is mounted
+def is_mounted(mpoint):
+	rc, out, err = run(["mountpoint", "-q", "%s/" % mpoint])
+	return rc == 0
+
+# Kill a list of processes
+def killprocs(procs, sig):
+	for proc in procs:
+		try:
+			os.kill(int(proc), int(sig))
+		except OSError:
+			# OSError: process may already be dead
+			pass
+		except ValueError:
+			# ValueError: conversion error, shouldn't happen,
+			#             but we don't care...
+			pass
+
+# This does the actual umounting for a single mount point
+def do_umount(mpoint, retries,rcs,):
+	if not is_mounted(mpoint):
+		sys.stderr.write("%s: %s is not mounted\n" % (sys.argv[0], mpoint))
+		return
+
+	rc, umount_out, umount_err = run(["umount", "%s/" % mpoint])
+	if rc == 0:
+		# Success on first try, yay!
+		return
+
+	# Check if umount worked anyway (rc is not necessarily 0...)
+	if not is_mounted(mpoint):
+		return
+
+	# Well, no we'll have to kill processes
+	for sig, timeout in retries:
+		# Get a list of processes
+		rc, lsof_out, lsof_err = run(["lsof", "-t", "+f", "--", "%s/" % mpoint])
+		# list() required in python 3 since filter() is only
+		# a generator object that cannot be rewound
+		procs = list(filter(None, lsof_out.split("\n")))
+
+		# Kill'em
+		if (sig == signal.SIGKILL):
+			# first stop all processes so they can't spawn new ones
+			# before getting killed
+			killprocs(procs, signal.SIGSTOP)
+			killprocs(procs, signal.SIGKILL)
+			killprocs(procs, signal.SIGCONT)
+		else:
+			killprocs(procs, sig)
+
+		# Try to umount until timoeut reached
+		abort_when = datetime.datetime.now() + datetime.timedelta(seconds=timeout)
+		while timeout < 0 or datetime.datetime.now() < abort_when:
+			rc, umount_out, umount_err = run(["umount", "%s/" % mpoint])
+			if rc == 0 or not is_mounted(mpoint):
+				return
+			time.sleep(1)
+
+	# Oooops, something went wrong...
+	msg = "%s: failed to umount %s; last output and error messages from umount:\n" % (sys.argv[0], mpoint)
+	if len(umount_out.strip()) > 0:
+		msg += "%s\n" % umount_out.strip()
+	if len(umount_err.strip()) > 0:
+		msg += "%s\n" % umount_err.strip()
+	sys.stderr.write(msg)
+	rcs.append(1)
+
+# umount everything in parallel
+threads = []
+rcs = []
+for mpoint in mpoints:
+	thread = threading.Thread(target=do_umount, args=(mpoint,retries,rcs,))
+	threads.append(thread)
+	thread.start()
+
+# collect them all
+for thread in threads:
+	thread.join()
+
+# some error happened
+if len(rcs):
+	sys.exit(1)

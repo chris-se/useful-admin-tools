@@ -1,0 +1,22 @@
+fkumount
+--------
+
+ - Recursively get rid of sub-mounts
+ - Support umounting of devices; track down all mount points
+   at which this device is mounted
+      Caveat: Mount namespaces?
+                 - How to detect (bind-mounted /proc/.../ns/mnt
+                                  kept around even if empty)
+                 - attach to mount ns only in Linux 3.8)
+ - Detect bind mounts
+   (mountinfo utility called does not support bind mounts)
+ - Parse /proc/.../mountinfo directly
+   (in order to e.g. detect bind mounts, recursive sub-mounts, ...)
+ - NFS kernel server exports
+ - Loop devices inside the mount point
+   (no process but still keeps mount point busy)
+ - Allow passing of -f flag to umount (if NFS server hangs)
+   (Note: -f is useless if busy, that's why it's not done so far.)
+ - Rewrite in C (?)
+      Pro:    doesn't need Python
+      Contra: more complex

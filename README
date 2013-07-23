@@ -1,0 +1,54 @@
+A collection of useful tools for system administrators
+======================================================
+
+License: GPLv3 or higher
+
+This repositry contains a collection of useful tools for the use
+in system administration.
+
+
+
+fkumount (Forcibly Killing UMOUNT)
+----------------------------------
+
+Umount a mount point. This Python [1] script umounts a directory. If the
+mount point is busy, it tries to find out which processes are still
+accessing it and kills them (if possible). It then tries to umount the same
+mount point again and again until that is either successful or a timeout is
+reached. (It tries multiple times to kill the processes accessing that mount
+point.)
+
+Multiple mount points may be specified. With threading, this utility tries
+to unmount those mount points simultaneously. The reationale for this is
+that in some circumstances, the mount utility itself may hang on some mount
+points (if there is a kernel problem) and this guarantees that every mount
+point that can be umounted sanely, will be. (The threading part is why it's
+written in Python.)
+
+If certain mount points do not exist, they will be ignored. If no valid
+mount points are specified, an error will be returned.
+
+If certain paths are not mountpoints, they will be ignored but no error will
+be raised. This means that once this utility completes with exit status 0,
+there is definitely nothing mounted at the given paths.
+
+It may seem that fuser -mk $PATH && umount $PATH should achieve the same,
+but fuser -m does not find all processes that still access the mount point -
+only lsof +f -- $PATH will find all (?) of them. This utility makes use of
+lsof and provides convenience functionality around it.
+
+Note that while several retries in acquiring the process list are done (to
+catch the case when a process forks at the wrong time), the entire logic is
+still prone to race conditions. There is no guarantee that this will always
+work properly - especially against malicious programs.
+
+Some may refer to the -l option of umount in recent versions; that is not
+what this utility is supposed to do. The idea behind this utility is that
+after a successful run the underlying device file can be safely removed
+without any data loss (other than what may have occurred by killing the
+processes still accessing it). The -l option leaves the device file still in
+use, it only frees up the path on additional accesses. Both have their uses,
+but this tool does something different.
+
+[1] Should work with any Python version from 2.3 onwards; but so far tested
+only with 2.6, 2.7 and 3.2.
