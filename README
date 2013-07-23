@@ -52,3 +52,35 @@ but this tool does something different.
 
 [1] Should work with any Python version from 2.3 onwards; but so far tested
 only with 2.6, 2.7 and 3.2.
+
+detect-debmirror (Detect main Debian mirror)
+--------------------------------------------
+
+This utility tries to detect the main mirror used in a Debian or derivative
+(such as Ubuntu) installation. The logic behind it is that it looks for the
+source of all of the 'essential' packages. Most of them will come from the
+main mirror used in the installation, some of them will come from
+debian-security or similar. It thus uses the mirror with the most packages
+in essential.
+
+The rationale behind this tool is that it is not entirely obvious what the
+primary mirror is, especially if multiple repositories are included and
+sources.list.d is used. Using 'essential' packages seems to be the most
+straight-forward way of detecting that. This may still break down in very
+exotic situation but seems to be a sane default in most cases.
+
+Use case: for any kind of script that wants to automatically detect the
+locally used Debian mirror (which may be a local one behind a Firewall, for
+example) in order to run debootstrap (for containers, virtualisation, build
+chroots, ...).
+
+This is not available as a library function, since python-apt and APT in
+general keep quite a few things in the global application state (i.e. global
+variables and such) so that it is best to just spawn this utility directly,
+even from binary applications.
+
+Please note that any automated system should probably fall back to a sane
+default if this utility fails.
+
+Only works with Python 2.x. Only works for Squeeze and later. (Tested with
+Squeeze and Wheezy.)

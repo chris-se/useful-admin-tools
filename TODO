@@ -24,3 +24,12 @@ fkumount
    manner a mount point is busy (processes, loop devices, submounts,
    etc.) so that an administrator might first check what's going on
    before actually killing it.
+
+detect-debmirror
+----------------
+
+ - Detect if this is even a Debian variant (python-apt could be
+   installed on RPM/other distros, then no essential packages
+   will be installed according to APT)
+ - Probaby rewrite in C++ to use the APT API
+   (python-apt is useful but still far too much in flux)

@@ -1,0 +1,52 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+# License: GPLv3
+# Authors: Christian Seiler <christian@iwakd.de>
+# Requires at least python-apt 0.7.100 (the one of Squeeze)
+# Will probably only work with Python 2.x
+# (does python-apt support 3.x?)
+
+import apt_pkg
+import apt.progress.base
+import sys
+
+apt_pkg.init_config()
+apt_pkg.init_system()
+
+class NullProgress(apt.progress.base.OpProgress):
+  def done(self,*args):
+    return
+  
+  # python-apt 0.7.100 (Squeeze) and 0.8.8 have
+  # a different signature for the update() method;
+  # we don't care, we just want to override it so
+  # it doesn't show anything
+  def update(self,*args):
+    return
+
+cache = apt_pkg.Cache(NullProgress())
+source_list = apt_pkg.SourceList()
+source_list.read_main_list()
+
+indexes = {}
+
+for pkg in cache.packages:
+  if pkg.essential:
+    version = pkg.current_ver
+    for file, dummy in version.file_list:
+      idx = source_list.find_index(file)
+      if idx is not None:
+        uri = idx.archive_uri('')
+        if not uri in indexes:
+          indexes[uri] = 1
+        else:
+          indexes[uri] = indexes[uri] + 1
+
+indexes_sorted = sorted(indexes.items(), lambda a, b: cmp(a[1], b[1]))
+
+if len(indexes_sorted) < 1:
+  print >>sys.stderr, "No indexes found for essential packages."
+  sys.exit(1)
+
+print indexes_sorted[-1][0]
