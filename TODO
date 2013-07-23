@@ -20,3 +20,7 @@ fkumount
  - Rewrite in C (?)
       Pro:    doesn't need Python
       Contra: more complex
+ - Create utility similar to fkumount which only shows in what
+   manner a mount point is busy (processes, loop devices, submounts,
+   etc.) so that an administrator might first check what's going on
+   before actually killing it.
